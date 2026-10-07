@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · SecureComm</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<style>
+.wrap{display:grid;grid-template-columns:1.1fr 1fr;min-height:100vh}
+.side{background:var(--navy);color:#c9ced6;padding:44px 56px;display:flex;flex-direction:column;position:relative;overflow:hidden}
+.side::before{content:"";position:absolute;inset:0;background-image:linear-gradient(#1c2430 1px,transparent 1px),linear-gradient(90deg,#1c2430 1px,transparent 1px);background-size:32px 32px;opacity:.6}
+.side>*{position:relative}
+.side h1{color:#fff;font-size:34px;line-height:1.15;margin:auto 0 14px;font-weight:600;max-width:440px}
+.side p{max-width:430px;color:#9aa3b0;margin:0 0 30px}
+.spec{display:grid;grid-template-columns:repeat(3,auto);gap:0;border-top:1px solid #2c3440;max-width:470px}
+.spec div{padding:14px 18px 0 0}.spec b{display:block;color:#fff;font-family:var(--mono);font-size:13px;font-weight:500}.spec span{font-size:12px;color:#7d8693}
+.foot{margin-top:40px;font-size:12px;color:#5f6874}
+.main{display:flex;align-items:center;justify-content:center;padding:40px}
+.form{width:100%;max-width:380px}
+.form h2{margin:0 0 4px;font-size:22px;font-weight:600}
+.form .sub{color:var(--ink2);margin:0 0 26px}
+.roles{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--line);border-radius:4px;overflow:hidden;margin-bottom:20px;background:#fff}
+.roles label{cursor:pointer;text-align:center;padding:10px 4px;font-size:12.5px;font-weight:600;color:var(--ink2);border-right:1px solid var(--line)}
+.roles label:last-child{border-right:0}
+.roles input{display:none}
+.roles input:checked+label{background:var(--brand);color:#fff}
+.roles small{display:block;font-weight:400;font-size:11px;opacity:.75}
+.err{background:var(--red2);color:var(--red);border:1px solid #f3c3be;padding:9px 12px;border-radius:4px;font-size:13px;margin-bottom:14px;display:none}
+.demo{margin-top:26px;border-top:1px solid var(--line);padding-top:16px;font-size:12.5px;color:var(--ink2)}
+.demo table{width:100%;border-collapse:collapse;margin-top:8px}
+.demo td{padding:5px 0;border-bottom:1px dashed var(--line);font-family:var(--mono);font-size:12px}
+.demo td:first-child{font-family:inherit;color:var(--mute)}
+.demo tr{cursor:pointer}.demo tr:hover td{color:var(--brand)}
+@media(max-width:860px){.wrap{grid-template-columns:1fr}.side{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <aside class="side">
+    <div class="logo"><i>S</i>SecureComm</div>
+    <h1>Secure offline message transmission between trusted nodes.</h1>
+    <p>Messages are sealed with authenticated encryption before they leave the node. Anything altered, replayed or sent by an untrusted node is discarded at the receiver.</p>
+    <div class="spec">
+      <div><b>AES-256-GCM</b><span>Cipher</span></div>
+      <div><b>HKDF-SHA256</b><span>Key derivation</span></div>
+      <div><b>HMAC ACK</b><span>Delivery receipt</span></div>
+    </div>
+    <div class="foot">Computer Networks &amp; Technologies · Semester V project</div>
+  </aside>
+  <main class="main">
+    <form class="form" id="f">
+      <h2>Sign in</h2>
+      <p class="sub">Choose your role and authenticate to continue.</p>
+      <div class="roles">
+        <input type="radio" name="role" id="r1" value="sender" checked><label for="r1">Sender<small>Node 1</small></label>
+        <input type="radio" name="role" id="r2" value="receiver"><label for="r2">Receiver<small>Node 2</small></label>
+        <input type="radio" name="role" id="r3" value="admin"><label for="r3">Admin<small>Monitor</small></label>
+      </div>
+      <div class="err" id="err"></div>
+      <label class="field"><span>Username</span><input class="input" id="u" autocomplete="username" required></label>
+      <label class="field"><span>Password</span><input class="input" id="p" type="password" autocomplete="current-password" required></label>
+      <button class="btn" style="width:100%;justify-content:center;margin-top:6px">Sign in</button>
+      <div class="demo">
+        Demo accounts <span style="color:var(--mute)">(click to fill)</span>
+        <table>
+          <tr data-r="sender"><td>Sender</td><td>sender</td><td>sender123</td></tr>
+          <tr data-r="receiver"><td>Receiver</td><td>receiver</td><td>receiver123</td></tr>
+          <tr data-r="admin"><td>Admin</td><td>admin</td><td>admin123</td></tr>
+        </table>
+      </div>
+    </form>
+  </main>
+</div>
+<script>
+document.querySelectorAll('.demo tr').forEach(tr=>tr.onclick=()=>{
+  const r=tr.dataset.r; document.querySelector(`input[value=${r}]`).checked=true;
+  u.value=r; p.value=r+'123';
+});
+f.onsubmit=async e=>{
+  e.preventDefault();
+  const role=document.querySelector('input[name=role]:checked').value;
+  const res=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u.value,password:p.value,role})});
+  const d=await res.json();
+  if(d.ok) location.href=d.redirect; else {err.textContent=d.error;err.style.display='block';}
+};
+</script>
+</body>
+</html>

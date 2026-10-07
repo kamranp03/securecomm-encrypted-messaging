@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin · SecureComm</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<style>
+.wrap{max-width:1380px;margin:0 auto;padding:20px 24px 40px}
+.head{display:flex;align-items:flex-end;gap:12px;margin-bottom:16px}
+.head h1{margin:0;font-size:20px;font-weight:600}.head p{margin:2px 0 0;color:var(--ink2);font-size:13px}
+.head .r{margin-left:auto;display:flex;gap:8px}
+.metrics{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid var(--line);border-radius:6px;background:#fff;margin-bottom:16px}
+.metrics div{padding:14px 18px;border-right:1px solid var(--line2)}.metrics div:last-child{border-right:0}
+.metrics b{display:block;font-size:24px;font-weight:600;font-variant-numeric:tabular-nums}
+.metrics span{font-size:12px;color:var(--mute)}
+/* path */
+.path{padding:18px 18px 22px;overflow-x:auto}
+.zones{display:grid;grid-template-columns:4fr 1.2fr 4fr;gap:10px;min-width:1000px;position:relative}
+.zone{border:1px dashed var(--line);border-radius:6px;padding:28px 10px 12px;position:relative}
+.zone>.label{position:absolute;top:8px;left:12px}
+.zone.ch{background:repeating-linear-gradient(-45deg,#fbfaf7,#fbfaf7 6px,#f4f2ec 6px,#f4f2ec 12px)}
+.stages{display:flex;justify-content:space-between;gap:8px}
+.st{flex:1;background:#fff;border:1px solid var(--line);border-radius:4px;padding:9px 10px;position:relative;transition:border-color .25s,background .25s;min-height:74px}
+.st .n{font-family:var(--mono);font-size:10.5px;color:var(--mute)}
+.st b{display:block;font-size:12.5px;font-weight:600;margin:1px 0}
+.st small{display:block;font-size:11px;color:var(--mute);font-family:var(--mono)}
+.st.ok{border-color:var(--green);background:var(--green2)}
+.st.warn{border-color:#e0a54a;background:var(--amber2)}
+.st.bad{border-color:var(--red);background:var(--red2)}
+.st.bad::after{content:"DROPPED";position:absolute;right:6px;top:7px;font-size:9.5px;font-weight:700;color:var(--red);letter-spacing:.05em}
+.st.active{box-shadow:0 0 0 3px #0f5e5a33;border-color:var(--brand)}
+.wire{position:relative;height:30px;margin:14px 0 0;min-width:1000px}
+.wire::before{content:"";position:absolute;left:0;right:0;top:14px;border-top:2px solid var(--line)}
+.pkt{position:absolute;top:4px;left:0;height:22px;padding:0 8px;border-radius:3px;background:var(--navy);color:#fff;font:500 11px/22px var(--mono);white-space:nowrap;transition:left .42s cubic-bezier(.4,0,.2,1);display:none}
+.pkt.bad{background:var(--red)}.pkt.rep{background:var(--amber)}
+.legend{display:flex;gap:16px;font-size:12px;color:var(--ink2);margin-top:6px;min-width:1000px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px;border:1px solid}
+.cols{display:grid;grid-template-columns:minmax(380px,1fr) 1.35fr;gap:16px;margin-top:16px;align-items:start}
+table.log{width:100%;border-collapse:collapse;font-size:12.5px}
+.log th{text-align:left;font-weight:600;color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding:8px 12px;border-bottom:1px solid var(--line2);background:#fbfaf8}
+.log td{padding:9px 12px;border-bottom:1px solid var(--line2);vertical-align:top}
+.log tr.row{cursor:pointer}.log tr.row:hover td{background:#fafaf7}
+.log tr.sel td{background:var(--brand2)!important}
+.logbox{max-height:470px;overflow:auto}
+.tabs{display:flex;gap:2px}
+.tabs button{border:0;background:none;padding:6px 10px;font-size:12.5px;font-weight:600;color:var(--mute);cursor:pointer;border-bottom:2px solid transparent}
+.tabs button.on{color:var(--ink);border-color:var(--brand)}
+.trace{padding:6px 18px 18px;max-height:560px;overflow:auto}
+.grp{margin-top:14px}
+.grp>.label{margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.tl{position:relative;padding-left:22px;border-left:2px solid var(--line2);margin-left:6px}
+.ti{position:relative;padding:4px 0 10px}
+.ti::before{content:"";position:absolute;left:-29px;top:8px;width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid var(--green)}
+.ti.fail::before{border-color:var(--red);background:var(--red)}
+.ti.warn::before{border-color:#d68f22;background:#f4c47a}
+.ti b{font-size:13px;font-weight:600}
+.ti pre{margin:4px 0 0;font:11.5px/1.55 var(--mono);color:var(--ink2);background:#f7f6f2;border:1px solid var(--line2);border-radius:4px;padding:7px 9px;white-space:pre-wrap;word-break:break-all}
+.ti.fail pre{background:var(--red2);border-color:#f3c3be;color:var(--red)}
+.verdict{margin:4px 0 0 6px;padding:9px 12px;border-radius:4px;font-weight:600;font-size:13px}
+.v-ok{background:var(--green2);color:var(--green)}.v-bad{background:var(--red2);color:var(--red)}
+.pk{border:1px solid var(--line2);border-radius:4px;margin-bottom:10px;overflow:hidden}
+.pk table{width:100%;border-collapse:collapse;font:12px var(--mono)}
+.pk th{background:#f7f6f2;font-weight:500;color:var(--mute);font-size:10.5px;text-align:left;padding:5px 8px;border-bottom:1px solid var(--line2)}
+.pk td{padding:6px 8px;border-bottom:1px solid var(--line2)}
+.pk .hex{padding:8px;font:11.5px/1.6 var(--mono);word-break:break-all;color:var(--ink2)}
+.pk .hex .h{color:var(--brand);font-weight:500}
+.empty{padding:40px;text-align:center;color:var(--mute);font-size:13px}
+.live{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--green)}
+.live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--green);animation:p 1.6s infinite}
+@keyframes p{50%{opacity:.3}}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="logo"><i>S</i>SecureComm</div><div class="sep"></div><span style="font-size:13px">Network administration</span>
+  <div class="who"><div class="avatar">A</div><span id="uname">admin</span><a class="out" href="/logout">Sign out</a></div>
+</header>
+<div class="wrap">
+  <div class="head">
+    <div><h1>Traffic monitor</h1><p>Every message between Node 1 and Node 2, traced from encryption to decryption.</p></div>
+    <div class="r"><span class="live">Live</span><button class="btn sec sm" onclick="replayAnim()">Replay animation</button><button class="btn sec sm" onclick="reset()">Clear log</button></div>
+  </div>
+  <div class="metrics">
+    <div><b id="m1">0</b><span>Transmissions</span></div>
+    <div><b id="m2" style="color:var(--green)">0</b><span>Delivered</span></div>
+    <div><b id="m3" style="color:var(--red)">0</b><span>Discarded at receiver</span></div>
+    <div><b id="m4">0</b><span>Packets on the wire</span></div>
+    <div><b id="m5">—</b><span>Attack block rate</span></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-h"><h3>Transmission path</h3><span id="cur" style="font-size:12.5px;color:var(--ink2)">No traffic selected</span></div>
+    <div class="path">
+      <div class="zones">
+        <div class="zone"><span class="label">Node 1 · Sender</span><div class="stages">
+          <div class="st" data-s="0"><span class="n">01</span><b>Plaintext</b><small>UTF-8 + timestamp</small></div>
+          <div class="st" data-s="1"><span class="n">02</span><b>Key derivation</b><small>HKDF-SHA256</small></div>
+          <div class="st" data-s="2"><span class="n">03</span><b>Encrypt</b><small>AES-256-GCM</small></div>
+          <div class="st" data-s="3"><span class="n">04</span><b>Packetise</b><small>20 B header</small></div>
+        </div></div>
+        <div class="zone ch"><span class="label">Channel</span><div class="stages">
+          <div class="st" data-s="4"><span class="n">05</span><b>UDP link</b><small id="chs">wireless</small></div>
+        </div></div>
+        <div class="zone"><span class="label">Node 2 · Receiver</span><div class="stages">
+          <div class="st" data-s="5"><span class="n">06</span><b>Sender check</b><small>trusted peers</small></div>
+          <div class="st" data-s="6"><span class="n">07</span><b>Replay check</b><small>msg_id counter</small></div>
+          <div class="st" data-s="7"><span class="n">08</span><b>Verify + decrypt</b><small>GCM tag, freshness</small></div>
+          <div class="st" data-s="8"><span class="n">09</span><b>Deliver</b><small>HMAC ACK</small></div>
+        </div></div>
+      </div>
+      <div class="wire"><div class="pkt" id="pkt"></div></div>
+      <div class="legend"><span><i style="background:var(--green2);border-color:var(--green)"></i>Passed</span><span><i style="background:var(--amber2);border-color:#e0a54a"></i>Attack present</span><span><i style="background:var(--red2);border-color:var(--red)"></i>Rejected — packet discarded</span></div>
+    </div>
+  </div>
+
+  <div class="cols">
+    <div class="panel">
+      <div class="panel-h"><h3>Traffic log</h3><span class="r" style="font-size:12px;color:var(--mute)" id="cnt"></span></div>
+      <div class="logbox"><table class="log"><thead><tr><th>#</th><th>Time</th><th>Message</th><th>Link</th><th>Result</th></tr></thead><tbody id="log"></tbody></table></div>
+    </div>
+    <div class="panel">
+      <div class="panel-h"><h3>Inspector</h3><div class="tabs r"><button class="on" data-t="trace">Step trace</button><button data-t="pk">Packets</button></div></div>
+      <div class="trace" id="insp"><div class="empty">Select a transmission from the log.</div></div>
+    </div>
+  </div>
+</div>
+<script>
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const REASON={delivered:'Delivered',auth_failed:'GCM tag mismatch — tampered or wrong key',replay_blocked:'Replay blocked',unknown_sender:'Untrusted sender',stale:'Stale message',malformed:'Malformed packet'};
+const ATT={none:'Normal',sniff:'Sniffed',tamper:'MITM modify',replay:'Replay',rogue:'Rogue node 9',wrongkey:'Forged key'};
+const FAILSTAGE={unknown_sender:5,malformed:5,replay_blocked:6,auth_failed:7,stale:7};
+let S=null,sel=null,tab='trace',lastN=0,tok=0;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const stEls=[...document.querySelectorAll('.st')];
+
+async function refresh(){
+  const r=await fetch('/api/state'); if(r.status!==200){location.href='/login';return}
+  S=await r.json(); const T=S.transmissions;
+  m1.textContent=T.length; m2.textContent=S.stats.delivered; m3.textContent=S.stats.dropped;
+  m4.textContent=T.reduce((a,t)=>a+t.packets.length*t.runs.length,0);
+  const att=T.filter(t=>t.attack!=='none'&&t.attack!=='sniff');
+  const blocked=att.filter(t=>t.runs.some(r=>!r.ok)).length;
+  m5.textContent=att.length?Math.round(100*blocked/att.length)+'%':'—';
+  cnt.textContent=T.length+' entries';
+  log.innerHTML=T.length?T.slice().reverse().map(t=>{
+    const ok=t.runs[0].ok, rep=t.runs.length>1;
+    return `<tr class="row ${sel===t.id?'sel':''}" onclick="pick(${t.id})"><td class="mono">${t.id}</td><td class="mono">${t.time}</td>
+    <td>${esc(t.message.length>34?t.message.slice(0,34)+'…':t.message)}</td>
+    <td>${t.attack==='none'?'<span class="tag t-n">Normal</span>':`<span class="tag t-warn">${ATT[t.attack]}</span>`}</td>
+    <td>${ok?'<span class="tag t-ok">Delivered</span>':`<span class="tag t-bad">${REASON[t.runs[0].reason].split(' —')[0]}</span>`}${rep?' <span class="tag t-bad">Replay blocked</span>':''}</td></tr>`}).join('')
+    :'<tr><td colspan="5" class="empty">No traffic yet. Sign in as sender in another tab and send a message.</td></tr>';
+  if(T.length>lastN){lastN=T.length;pick(T[T.length-1].id);}
+}
+function cur(){return S&&S.transmissions.find(t=>t.id===sel)}
+function pick(id){sel=id;document.querySelectorAll('tr.row').forEach(r=>r.classList.toggle('sel',r.getAttribute('onclick')===`pick(${id})`));renderInsp();animate();}
+
+function item(s){const c=s[1]==='fail'?'fail':s[1]==='warn'?'warn':'';return `<div class="ti ${c}"><b>${esc(s[0])}</b><pre>${esc(s[2])}</pre></div>`}
+function renderInsp(){
+  const t=cur(); if(!t) return;
+  if(tab==='trace'){
+    let h=`<div class="grp"><div class="label">Node 1 — sender</div><div class="tl">${t.sender_steps.map(item).join('')}</div></div>
+      <div class="grp"><div class="label">Channel</div><div class="tl">${t.channel.map(item).join('')}</div></div>`;
+    t.runs.forEach(r=>{h+=`<div class="grp"><div class="label">Node 2 — ${esc(r.label.toLowerCase())}</div><div class="tl">${r.steps.map(item).join('')}</div>
+      <div class="verdict ${r.ok?'v-ok':'v-bad'}">${r.ok?'Accepted and delivered to Node 2 inbox':'Discarded — '+REASON[r.reason]}</div></div>`});
+    insp.innerHTML=h;
+  } else {
+    insp.innerHTML=`<p style="font-size:12.5px;color:var(--ink2);margin:12px 0">Header layout: <span class="mono">magic(2) ver(1) type(1) sender(4) msg_id(8) frag_idx(2) frag_total(2)</span> followed by the ciphertext fragment.</p>`+
+    t.packets.map(p=>`<div class="pk"><table><tr><th>Frag</th><th>Magic</th><th>Ver</th><th>Type</th><th>Sender</th><th>msg_id</th><th>Size</th></tr>
+      <tr><td>${p.frag}</td><td>${p.magic}</td><td>${p.ver}</td><td>${p.type}</td><td>${p.sender}</td><td>${p.msg_id}</td><td>${p.len} B</td></tr></table>
+      <div class="hex"><span class="h">${p.header.match(/../g).join(' ')}</span> ${p.payload.match(/../g).join(' ')}</div></div>`).join('');
+  }
+}
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.t;document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));renderInsp()});
+
+async function animate(){
+  const t=cur(); if(!t) return; const my=++tok;
+  cur_lbl(t);
+  chs.textContent=t.attack==='none'?'wireless':ATT[t.attack].toLowerCase();
+  const pkt=document.getElementById('pkt'), wire=pkt.parentElement.getBoundingClientRect();
+  for(const r of t.runs){
+    stEls.forEach(e=>e.className='st');
+    const replay=r.label.startsWith('Replay');
+    const end=r.ok?8:FAILSTAGE[r.reason]??7;
+    pkt.className='pkt'+(replay?' rep':''); pkt.textContent=replay?'replayed pkt':'msg '+String(t.msg_id).slice(-6); pkt.style.display='block';
+    for(let i=replay?4:0;i<=end;i++){
+      if(my!==tok) return;
+      const b=stEls[i].getBoundingClientRect();
+      pkt.style.left=(b.left-wire.left+b.width/2-pkt.offsetWidth/2)+'px';
+      stEls[i].classList.add('active'); await sleep(430); stEls[i].classList.remove('active');
+      let c='ok';
+      if(i===1&&(t.attack==='rogue'||t.attack==='wrongkey')) c='warn';
+      if(i===4&&t.attack!=='none'){c='warn'; if(t.attack==='tamper') pkt.className='pkt bad';}
+      if(i===end&&!r.ok) c='bad';
+      stEls[i].classList.add(c);
+    }
+    if(!r.ok){pkt.className='pkt bad';pkt.textContent='discarded';}
+    else pkt.textContent='decrypted ✓';
+    await sleep(t.runs.length>1?1100:400);
+  }
+}
+function cur_lbl(t){document.getElementById('cur').innerHTML=`#${t.id} · <span class="mono">msg_id ${t.msg_id}</span> · “${esc(t.message.slice(0,40))}” · ${ATT[t.attack]}`}
+function replayAnim(){animate()}
+async function reset(){if(!confirm('Clear all traffic?'))return;await fetch('/api/reset',{method:'POST'});lastN=0;sel=null;insp.innerHTML='<div class="empty">Log cleared.</div>';stEls.forEach(e=>e.className='st');pkt.style.display='none';refresh()}
+refresh(); setInterval(refresh,1500);
+</script>
+</body>
+</html>

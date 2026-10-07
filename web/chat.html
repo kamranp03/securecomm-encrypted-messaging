@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SecureComm</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<style>
+body{display:flex;flex-direction:column;height:100vh}
+.app{flex:1;display:grid;grid-template-columns:290px 1fr;min-height:0}
+.sb{background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;overflow:auto}
+.sb section{padding:18px 18px;border-bottom:1px solid var(--line2)}
+.me{display:flex;gap:12px;align-items:center}
+.me .avatar{width:42px;height:42px;background:var(--brand);font-size:14px}
+.me b{display:block;font-size:14px}.me span{font-size:12px;color:var(--mute)}
+.peer{display:flex;gap:10px;align-items:center;padding:10px;border-radius:4px;background:var(--paper);margin-top:10px}
+.peer .avatar{background:#3b4656}
+.peer b{font-size:13px;display:block}.peer span{font-size:11.5px;color:var(--mute)}
+.conv{display:flex;flex-direction:column;min-height:0}
+.conv-h{background:#fff;border-bottom:1px solid var(--line);padding:12px 22px;display:flex;align-items:center;gap:12px}
+.conv-h b{font-size:14px}.conv-h small{display:block;color:var(--mute);font-size:12px}
+.e2e{margin-left:auto;font-size:12px;color:var(--green);display:flex;align-items:center;gap:6px}
+.msgs{flex:1;overflow:auto;padding:22px 28px;display:flex;flex-direction:column;gap:10px;
+background:var(--paper) radial-gradient(#e2e0d9 1px,transparent 1px) 0 0/18px 18px}
+.day{align-self:center;font-size:11px;color:var(--mute);background:#fff;border:1px solid var(--line);padding:2px 10px;border-radius:10px}
+.b{max-width:62%;padding:9px 12px 6px;border-radius:6px;background:#fff;border:1px solid var(--line);position:relative}
+.b.out{align-self:flex-end;background:#e2efe9;border-color:#c7ddd3}
+.b.in{align-self:flex-start}
+.b p{margin:0 0 3px;white-space:pre-wrap;word-break:break-word}
+.b .meta{font-size:11px;color:var(--mute);display:flex;gap:8px;align-items:center;justify-content:flex-end}
+.b.drop{align-self:center;max-width:78%;background:var(--red2);border-color:#f3c3be;color:var(--red);font-size:13px;text-align:left}
+.b.drop .meta{justify-content:flex-start;color:#c26a60}
+.b.failout{background:var(--red2);border-color:#f3c3be}
+.empty{margin:auto;text-align:center;color:var(--mute);font-size:13px}
+.comp{background:#fff;border-top:1px solid var(--line);padding:12px 22px}
+.comp .row{display:flex;gap:10px;align-items:flex-end}
+.comp textarea{flex:1;resize:none;height:44px;padding:11px 12px;border:1px solid var(--line);border-radius:4px;outline:none}
+.comp textarea:focus{border-color:var(--brand)}
+.comp .opts{display:flex;align-items:center;gap:10px;margin-bottom:9px;font-size:12px;color:var(--ink2)}
+.comp select{height:30px;border:1px solid var(--line);border-radius:4px;padding:0 8px;background:#fff;font-size:12.5px}
+.toast{position:fixed;bottom:96px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:9px 16px;border-radius:4px;font-size:13px;display:none}
+.counter{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.counter div{background:var(--paper);border-radius:4px;padding:8px 10px}
+.counter b{font-size:20px;display:block;font-weight:600}.counter span{font-size:11px;color:var(--mute)}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="logo"><i>S</i>SecureComm</div><div class="sep"></div>
+  <span id="roleLbl" style="font-size:13px"></span>
+  <div class="who"><span><span class="status-dot"></span>Link up</span><div class="avatar" id="av"></div><span id="uname"></span><a class="out" href="/logout">Sign out</a></div>
+</header>
+<div class="app">
+  <aside class="sb">
+    <section>
+      <div class="me"><div class="avatar" id="meAv"></div><div><b id="meName"></b><span id="meId"></span></div></div>
+    </section>
+    <section>
+      <div class="label">Connected peer</div>
+      <div class="peer"><div class="avatar" id="peerAv"></div><div><b id="peerName"></b><span id="peerAddr"></span></div><span class="tag t-ok" style="margin-left:auto">trusted</span></div>
+    </section>
+    <section>
+      <div class="label" style="margin-bottom:10px">Session security</div>
+      <dl class="kv">
+        <dt>Cipher</dt><dd>AES-256-GCM</dd>
+        <dt>Key derivation</dt><dd>HKDF-SHA256</dd>
+        <dt>Node key</dt><dd id="fp"></dd>
+        <dt>Freshness window</dt><dd>30 s</dd>
+        <dt>Replay guard</dt><dd>msg counter</dd>
+        <dt>Transport</dt><dd>UDP · 24 B frags</dd>
+      </dl>
+    </section>
+    <section>
+      <div class="label">This session</div>
+      <div class="counter"><div><b id="c1">0</b><span id="c1l"></span></div><div><b id="c2" style="color:var(--red)">0</b><span id="c2l"></span></div></div>
+    </section>
+  </aside>
+  <div class="conv">
+    <div class="conv-h"><div class="avatar" id="peerAv2" style="background:#3b4656"></div><div><b id="peerName2"></b><small id="peerSub"></small></div>
+      <div class="e2e"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Encrypted &amp; authenticated</div></div>
+    <div class="msgs" id="msgs"></div>
+    <div class="comp" id="comp" style="display:none">
+      <div class="opts">
+        <span>Link simulation</span>
+        <select id="attack">
+          <option value="none">Normal link</option>
+          <option value="sniff">Eavesdropper on link (sniff)</option>
+          <option value="tamper">Man-in-the-middle (modify packet)</option>
+          <option value="replay">Attacker replays packet</option>
+          <option value="rogue">Impersonate untrusted node 9</option>
+          <option value="wrongkey">Send with forged key</option>
+        </select>
+        <span style="margin-left:auto;color:var(--mute)">Enter to send · Shift+Enter for newline</span>
+      </div>
+      <div class="row"><textarea id="msg" placeholder="Write a message"></textarea><button class="btn" id="sendBtn">Send</button></div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const REASON={delivered:'Delivered',auth_failed:'Integrity check failed (tampered or wrong key)',replay_blocked:'Duplicate message ID (replay)',
+ unknown_sender:'Sender is not a trusted node',stale:'Outside freshness window',malformed:'Malformed packet'};
+const ATT={none:'',sniff:'link sniffed',tamper:'modified in transit',replay:'replayed',rogue:'as node 9',wrongkey:'forged key'};
+let me, role;
+function toast(t){toast_.textContent=t;toast_.style.display='block';clearTimeout(window._t);window._t=setTimeout(()=>toast_.style.display='none',2600)}
+const toast_=document.getElementById('toast');
+
+async function init(){
+  const r=await fetch('/api/me'); if(r.status!==200){location.href='/login';return}
+  me=await r.json(); role=me.role;
+  const peer = role==='sender' ? {n:'Node 2 — Command Base',a:'127.0.0.1:9000',i:'N2'} : {n:'Node 1 — Field Unit Alpha',a:'127.0.0.1:9001',i:'N1'};
+  roleLbl.textContent = role==='sender'?'Sender console':'Receiver console';
+  uname.textContent=me.user; av.textContent=me.user[0].toUpperCase();
+  meAv.textContent='N'+me.node; meName.textContent=me.name; meId.textContent='Node ID '+me.node+' · signed in as '+me.user;
+  fp.textContent=me.key_fp+'…';
+  peerAv.textContent=peerAv2.textContent=peer.i; peerName.textContent=peerName2.textContent=peer.n; peerAddr.textContent=peer.a;
+  peerSub.textContent = role==='sender'?'Messages you send are encrypted on this device':'Only verified messages are shown as delivered';
+  c1l.textContent = role==='sender'?'Delivered':'Accepted'; c2l.textContent = role==='sender'?'Rejected':'Discarded';
+  if(role==='sender'){comp.style.display='block'; msg.focus();}
+  refresh(); setInterval(refresh,1500);
+}
+let lastCount=-1;
+async function refresh(){
+  const r=await fetch('/api/state'); if(r.status!==200){location.href='/login';return}
+  const s=await r.json();
+  const list = role==='sender'?s.sent:s.inbox;
+  if(list.length===lastCount) return;
+  const atBottom = lastCount===-1 || msgs.scrollHeight-msgs.scrollTop-msgs.clientHeight<60;
+  lastCount=list.length;
+  let ok=0,bad=0, html='<div class="day">Today</div>';
+  if(!list.length) html+=`<div class="empty">${role==='sender'?'No messages yet. Type below to send an encrypted message.':'Waiting for incoming messages…'}</div>`;
+  for(const m of list){
+    if(role==='sender'){
+      const good=m.status==='delivered'; good?ok++:bad++;
+      html+=`<div class="b out ${good?'':'failout'}"><p>${esc(m.message)}</p><div class="meta">
+        ${m.attack!=='none'?`<span class="tag t-warn">${ATT[m.attack]}</span>`:''}
+        ${good?'<span class="tag t-ok">ACK verified</span>':`<span class="tag t-bad">${REASON[m.status]}</span>`}<span>${m.time}</span></div></div>`;
+    } else if(m.dropped){ bad++;
+      html+=`<div class="b drop"><p><b>Packet discarded</b> — ${REASON[m.reason]}</p><div class="meta mono">from node ${m.from} · msg ${m.msg_id} · ${m.time}</div></div>`;
+    } else { ok++;
+      html+=`<div class="b in"><p>${esc(m.message)}</p><div class="meta"><span class="tag t-ok">verified</span><span class="mono">msg ${String(m.msg_id).slice(-6)}</span><span>${m.time}</span></div></div>`;
+    }
+  }
+  msgs.innerHTML=html; c1.textContent=ok; c2.textContent=bad;
+  if(atBottom) msgs.scrollTop=msgs.scrollHeight;
+}
+async function send(){
+  const text=msg.value.trim(); if(!text) return;
+  sendBtn.disabled=true;
+  const r=await fetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,attack:attack.value})});
+  const d=await r.json(); sendBtn.disabled=false;
+  if(d.error){toast(d.error);return}
+  msg.value=''; lastCount=-2;
+  toast(d.delivered ? (attack.value==='replay'?'Delivered. Replayed copy was rejected by receiver.':'Encrypted, delivered and acknowledged.') : 'Receiver rejected the message: '+REASON[d.tx.runs[0].reason]);
+  refresh();
+}
+document.getElementById('sendBtn').onclick=send;
+document.getElementById('msg').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
+init();
+</script>
+</body>
+</html>
