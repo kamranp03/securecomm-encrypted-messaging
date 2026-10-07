@@ -11,12 +11,29 @@ network with **no internet**. Runs on any Wi-Fi hotspot / LAN / loopback.
 - Fragmentation, authenticated ACKs, retransmission, packet-loss simulation
 - Attack lab: sniff, tamper, replay (`attacks/mitm.py`)
 - 10 automated tests
+- Web UI with login: Sender, Receiver and Admin dashboards (live packet-path visualisation)
 
 ## Setup
 ```
 pip install -r requirements.txt
 python cli.py keygen --out master.key      # copy this file to every trusted node offline
 ```
+`master.key` is secret and is not stored in git, so generate it once after cloning.
+
+## Web UI
+```
+python web/app.py
+```
+Open http://127.0.0.1:5000 and sign in:
+
+| Role | Username | Password | What you get |
+|---|---|---|---|
+| Sender (Node 1) | `sender` | `sender123` | Chat screen to send encrypted messages, with a link-simulation menu (normal, sniff, tamper, replay, rogue node, forged key) |
+| Receiver (Node 2) | `receiver` | `receiver123` | Inbox of verified messages, and notices for discarded ones with the reason |
+| Admin | `admin` | `admin123` | Traffic monitor: animated packet path, step-by-step crypto trace, hex packet inspector |
+
+A browser keeps one login at a time, so open each role in a separate browser or an incognito window.
+The web UI uses the real `securecomm` crypto and packet code; the attacker is simulated inside the server.
 
 ## Run (two terminals)
 ```
