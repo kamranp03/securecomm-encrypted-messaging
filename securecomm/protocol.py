@@ -2,9 +2,17 @@
 
 Header (20 bytes, network byte order):
     magic(2) | version(1) | type(1) | sender_id(4) | msg_id(8) | frag_idx(2) | frag_total(2)
+
+Payload rules (enforced by unpack):
+    DATA: ciphertext fragment (>= 1 byte) || header_tag (TAG_LEN bytes)
+    ACK:  header_tag (TAG_LEN bytes) exactly
+Every packet therefore carries an HMAC-SHA256 over its own header, so no header
+field can be altered without detection.
 """
 import struct
 from dataclasses import dataclass
+
+from .crypto import TAG_LEN
 
 MAGIC = b"SM"
 VERSION = 1
@@ -47,7 +55,25 @@ def unpack(data: bytes) -> Packet:
         raise ProtocolError("bad type")
     if total < 1 or total > MAX_FRAGMENTS or idx >= total:
         raise ProtocolError("bad fragment fields")
-    return Packet(ptype, sid, mid, idx, total, data[HDR_SIZE:])
+    payload = data[HDR_SIZE:]
+    if ptype == T_ACK:
+        if len(payload) != TAG_LEN:
+            raise ProtocolError("bad ack tag length")
+        if idx != 0 or total != 1:
+            raise ProtocolError("bad ack fragment fields")
+    elif len(payload) <= TAG_LEN:
+        raise ProtocolError("fragment carries no ciphertext")
+    return Packet(ptype, sid, mid, idx, total, payload)
+
+
+def split_tag(payload: bytes) -> tuple:
+    """Split a DATA payload into (ciphertext fragment, header tag)."""
+    return payload[:-TAG_LEN], payload[-TAG_LEN:]
+
+
+def join_tag(body: bytes, tag: bytes) -> bytes:
+    """Attach a header tag to a DATA payload."""
+    return body + tag
 
 
 def fragment(blob: bytes, size: int) -> list:

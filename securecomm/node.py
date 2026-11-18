@@ -9,38 +9,24 @@ import time
 
 from . import crypto, protocol
 from .protocol import Packet, T_ACK, T_DATA
+from .receiver import (MAX_PENDING, REASSEMBLY_TTL, REORDER_WINDOW,  # noqa: F401
+                       STATE_VERSION, ReceiverState, load_state_file,
+                       save_state_file)
 
 log = logging.getLogger("securecomm")
 
 
-class _SenderState:
-    """Replay-protection state for one remote sender."""
-
-    def __init__(self):
-        self.highest = 0
-        self.seen = set()
-        self.order = collections.deque()
-
-    def record(self, msg_id):
-        self.highest = max(self.highest, msg_id)
-        self.seen.add(msg_id)
-        self.order.append(msg_id)
-        if len(self.order) > 1024:
-            self.seen.discard(self.order.popleft())
-
-
 class Node:
-    MAX_PENDING = 64
-    REASSEMBLY_TTL = 30.0
-
     def __init__(self, node_id, master_key, host="127.0.0.1", port=0, peers=None,
-                 frag_size=400, loss_rate=0.0, max_age=30.0):
+                 frag_size=400, loss_rate=0.0, max_age=30.0, state_file=None,
+                 reorder_window=None):
         self.node_id = node_id
         self.master = master_key
         self.peers = set(peers) if peers is not None else None  # None = any holder of the key
         self.frag_size = frag_size
         self.loss_rate = loss_rate          # simulated radio loss on transmit (for testing)
         self.max_age = max_age
+        self.state_file = state_file        # persist msg_id high-water + replay state (optional)
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((host, port))
@@ -49,17 +35,21 @@ class Node:
 
         self.inbox = queue.Queue()
         self.stats = collections.Counter()
-        self._keys = {}
+        rx_kw = {} if reorder_window is None else {"reorder_window": reorder_window}
+        self.rx = ReceiverState(master_key, peers=self.peers, local_id=node_id,
+                                max_age=max_age, stats=self.stats, **rx_kw)
         self._acks = {}
         self._ack_lock = threading.Lock()
-        self._reasm = {}
-        self._state = {}
+        self._id_lock = threading.Lock()     # guards _next_id (and state saving)
         self._next_id = time.time_ns() // 1000   # time-seeded: stays monotonic across restarts
         self._running = False
         self._thread = None
+        self._load_state()
 
     # ---------- lifecycle ----------
     def start(self):
+        if self._running:
+            return self
         self._running = True
         self._thread = threading.Thread(target=self._rx_loop, daemon=True)
         self._thread.start()
@@ -67,15 +57,47 @@ class Node:
 
     def stop(self):
         self._running = False
-        if self._thread:
-            self._thread.join(timeout=1)
-        self.sock.close()
+        t, self._thread = self._thread, None
+        if t and t is not threading.current_thread():
+            t.join(timeout=1)
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+    # ---------- state persistence ----------
+    def _load_state(self):
+        if not self.state_file:
+            return
+        data = load_state_file(self.state_file)
+        if not data:
+            return
+        if data.get("node_id") not in (None, self.node_id):
+            log.warning("state file %s belongs to node %s, ignoring it",
+                        self.state_file, data.get("node_id"))
+            return
+        # msg ids must never repeat for this node id (AES-GCM nonce uniqueness)
+        self._next_id = max(self._next_id, int(data.get("next_id", 0)) + 1)
+        self.rx.load_state(data.get("senders", {}))
+
+    def _save_state(self):
+        """Called with _id_lock held; rx.dump_state() takes its own lock."""
+        if not self.state_file:
+            return
+        save_state_file(self.state_file, {
+            "version": STATE_VERSION,
+            "node_id": self.node_id,
+            "next_id": self._next_id,
+            "senders": self.rx.dump_state(),
+        })
 
     # ---------- helpers ----------
-    def _key_for(self, node_id):
-        if node_id not in self._keys:
-            self._keys[node_id] = crypto.derive_node_key(self.master, node_id)
-        return self._keys[node_id]
+    def _alloc_id(self):
+        """Allocate a fresh msg_id; unique per node id across threads and restarts."""
+        with self._id_lock:
+            self._next_id += 1
+            self._save_state()
+            return self._next_id
 
     def _tx(self, data, addr):
         if self.loss_rate and random.random() < self.loss_rate:
@@ -84,11 +106,7 @@ class Node:
         try:
             self.sock.sendto(data, addr)
         except OSError:
-            pass
-
-    def _drop(self, reason, detail):
-        self.stats[reason] += 1
-        log.warning("DROP [%s] %s", reason, detail)
+            self.stats["tx_error"] += 1
 
     def recv(self, timeout=None):
         """Returns (sender_id, plaintext_bytes) or None on timeout."""
@@ -99,11 +117,12 @@ class Node:
 
     # ---------- sending ----------
     def send(self, dest_addr, dest_id, data: bytes, retries=5, timeout=1.0) -> bool:
-        self._next_id += 1
-        msg_id = self._next_id
-        blob = crypto.encrypt_message(self._key_for(self.node_id), self.node_id, msg_id, data)
+        msg_id = self._alloc_id()
+        blob = crypto.encrypt_message(self.rx.seal_key(self.node_id), self.node_id,
+                                      msg_id, data)
         parts = protocol.fragment(blob, self.frag_size)
         total = len(parts)
+        hdr_key = self.rx.header_key(self.node_id)
         ev = threading.Event()
         with self._ack_lock:
             self._acks[(dest_id, msg_id)] = ev
@@ -112,7 +131,9 @@ class Node:
                 if attempt:
                     self.stats["retransmits"] += 1
                 for i, part in enumerate(parts):
-                    pkt = Packet(T_DATA, self.node_id, msg_id, i, total, part)
+                    pkt = Packet(T_DATA, self.node_id, msg_id, i, total)
+                    tag = crypto.header_tag(hdr_key, protocol.header_bytes(pkt))
+                    pkt.payload = protocol.join_tag(part, tag)
                     self._tx(protocol.pack(pkt), dest_addr)
                 if ev.wait(timeout):
                     self.stats["sent_ok"] += 1
@@ -123,12 +144,6 @@ class Node:
             with self._ack_lock:
                 self._acks.pop((dest_id, msg_id), None)
 
-    def _send_ack(self, to_sender, msg_id, addr):
-        hdr = Packet(T_ACK, self.node_id, msg_id, 0, 1)
-        tag = crypto.ack_tag(self._key_for(self.node_id), protocol.header_bytes(hdr))
-        hdr.payload = tag
-        self._tx(protocol.pack(hdr), addr)
-
     # ---------- receiving ----------
     def _rx_loop(self):
         while self._running:
@@ -138,76 +153,15 @@ class Node:
                 continue
             except OSError:
                 break
-            try:
-                pkt = protocol.unpack(data)
-            except protocol.ProtocolError as e:
-                self._drop("malformed", str(e))
-                continue
-            if pkt.ptype == T_DATA:
-                self._handle_data(pkt, addr)
-            else:
-                self._handle_ack(pkt)
-
-    def _handle_ack(self, pkt):
-        hdr = protocol.header_bytes(Packet(T_ACK, pkt.sender_id, pkt.msg_id, 0, 1))
-        if not crypto.verify_ack_tag(self._key_for(pkt.sender_id), hdr, pkt.payload):
-            self._drop("bad_ack", f"from node {pkt.sender_id}")
-            return
-        with self._ack_lock:
-            ev = self._acks.get((pkt.sender_id, pkt.msg_id))
-        if ev:
-            ev.set()
-
-    def _purge(self):
-        now = time.time()
-        for k in [k for k, v in self._reasm.items() if now - v["ts"] > self.REASSEMBLY_TTL]:
-            del self._reasm[k]
-
-    def _handle_data(self, pkt, addr):
-        s, m = pkt.sender_id, pkt.msg_id
-        if self.peers is not None and s not in self.peers:
-            self._drop("unknown_sender", f"node {s} is not authorised")
-            return
-
-        st = self._state.setdefault(s, _SenderState())
-        if m in st.seen:                       # already delivered
-            self._drop("replay_blocked", f"duplicate msg {m} from node {s}")
-            self._send_ack(s, m, addr)         # idempotent re-ACK in case our ACK was lost
-            return
-        if m < st.highest:
-            self._drop("replay_blocked", f"old msg {m} < {st.highest} from node {s}")
-            return
-
-        key = (s, m)
-        buf = self._reasm.get(key)
-        if buf is None:
-            if len(self._reasm) >= self.MAX_PENDING:
-                self._purge()
-                if len(self._reasm) >= self.MAX_PENDING:
-                    self._drop("overflow", "too many partial messages")
-                    return
-            buf = {"total": pkt.frag_total, "frags": {}, "ts": time.time()}
-            self._reasm[key] = buf
-        elif buf["total"] != pkt.frag_total:
-            self._drop("malformed", "fragment count mismatch")
-            return
-
-        buf["frags"][pkt.frag_idx] = pkt.payload
-        if len(buf["frags"]) < buf["total"]:
-            return
-
-        blob = b"".join(buf["frags"][i] for i in range(buf["total"]))
-        del self._reasm[key]
-        try:
-            plain = crypto.decrypt_message(self._key_for(s), s, m, blob, self.max_age)
-        except crypto.StaleError:
-            self._drop("stale", f"msg {m} from node {s} outside freshness window")
-            return
-        except crypto.AuthError:
-            self._drop("auth_failed", f"msg {m} from node {s} failed authentication")
-            return
-
-        st.record(m)
-        self.stats["delivered"] += 1
-        self.inbox.put((s, plain))
-        self._send_ack(s, m, addr)
+            out = self.rx.ingest_raw(data, addr)
+            if out.ok and out.reason == "delivered":
+                self._save_state()
+                self.inbox.put((out.pkt.sender_id, out.plain))
+            elif out.ok and out.reason == "ack_ok":
+                with self._ack_lock:
+                    ev = self._acks.get((out.pkt.sender_id, out.pkt.msg_id))
+                if ev:
+                    ev.set()
+            if out.ack is not None:
+                # delivery receipt (or idempotent re-ACK for a lost ACK)
+                self._tx(protocol.pack(out.ack), addr)

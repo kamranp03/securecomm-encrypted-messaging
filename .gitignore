@@ -3,3 +3,12 @@ env/
 __pycache__/
 master.key
 *.key
+
+# runtime state: replay protection + message-id high-water marks,
+# regenerated automatically every time a node starts
+node-state-*.json
+
+# local scratch / tooling output
+*.log
+fetch_fonts.py
+notes.md
