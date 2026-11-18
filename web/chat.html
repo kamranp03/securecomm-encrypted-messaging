@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SecureComm</title>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/fonts.css">
 <link rel="stylesheet" href="/style.css">
 <style>
 body{display:flex;flex-direction:column;height:100vh}
@@ -65,8 +65,9 @@ background:var(--paper) radial-gradient(#e2e0d9 1px,transparent 1px) 0 0/18px 18
         <dt>Cipher</dt><dd>AES-256-GCM</dd>
         <dt>Key derivation</dt><dd>HKDF-SHA256</dd>
         <dt>Node key</dt><dd id="fp"></dd>
+        <dt>Header auth</dt><dd>HMAC-SHA256</dd>
         <dt>Freshness window</dt><dd>30 s</dd>
-        <dt>Replay guard</dt><dd>msg counter</dd>
+        <dt>Replay guard</dt><dd>counter + seen set</dd>
         <dt>Transport</dt><dd>UDP · 24 B frags</dd>
       </dl>
     </section>
@@ -99,8 +100,10 @@ background:var(--paper) radial-gradient(#e2e0d9 1px,transparent 1px) 0 0/18px 18
 <div class="toast" id="toast"></div>
 <script>
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const REASON={delivered:'Delivered',auth_failed:'Integrity check failed (tampered or wrong key)',replay_blocked:'Duplicate message ID (replay)',
- unknown_sender:'Sender is not a trusted node',stale:'Outside freshness window',malformed:'Malformed packet'};
+const REASON={delivered:'Delivered',auth_failed:'Integrity check failed (tampered or wrong key)',
+ bad_header:'Header authentication failed (packet modified or forged)',replay_blocked:'Duplicate message ID (replay)',
+ unknown_sender:'Sender is not a trusted node',stale:'Outside freshness window',malformed:'Malformed packet',
+ overflow:'Receiver reassembly buffer full',retransmit_acked:'Retransmitted (already delivered)',pending:'Incomplete message'};
 const ATT={none:'',sniff:'link sniffed',tamper:'modified in transit',replay:'replayed',rogue:'as node 9',wrongkey:'forged key'};
 let me, role;
 function toast(t){toast_.textContent=t;toast_.style.display='block';clearTimeout(window._t);window._t=setTimeout(()=>toast_.style.display='none',2600)}
@@ -125,9 +128,10 @@ async function refresh(){
   const r=await fetch('/api/state'); if(r.status!==200){location.href='/login';return}
   const s=await r.json();
   const list = role==='sender'?s.sent:s.inbox;
-  if(list.length===lastCount) return;
+  const total = role==='sender'?s.sent_total:s.inbox_total;   // history is bounded; total keeps counting
+  if(total===lastCount) return;
   const atBottom = lastCount===-1 || msgs.scrollHeight-msgs.scrollTop-msgs.clientHeight<60;
-  lastCount=list.length;
+  lastCount=total;
   let ok=0,bad=0, html='<div class="day">Today</div>';
   if(!list.length) html+=`<div class="empty">${role==='sender'?'No messages yet. Type below to send an encrypted message.':'Waiting for incoming messages…'}</div>`;
   for(const m of list){

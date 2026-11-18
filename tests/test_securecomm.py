@@ -5,7 +5,7 @@ import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from securecomm import Node, crypto  # noqa: E402
+from securecomm import Node, crypto, protocol  # noqa: E402
 
 MASTER = os.urandom(32)
 
@@ -48,12 +48,15 @@ class Tests(unittest.TestCase):
         self.assertTrue(tx.send(addr, 2, b"order: move at dawn"))
         self.assertIsNotNone(rx.recv(1))
         attacker = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        for d in captured:
-            attacker.sendto(d, addr)
-        time.sleep(0.5)
-        self.assertIsNone(rx.recv(0.2))
-        self.assertGreaterEqual(rx.stats["replay_blocked"], 1)
-        self.assertEqual(rx.stats["delivered"], 1)
+        try:
+            for d in captured:
+                attacker.sendto(d, addr)
+            time.sleep(0.5)
+            self.assertIsNone(rx.recv(0.2))
+            self.assertGreaterEqual(rx.stats["replay_blocked"], 1)
+            self.assertEqual(rx.stats["delivered"], 1)
+        finally:
+            attacker.close()
 
     def test_tamper_rejected(self):
         tx, rx, addr = self.mk()
@@ -61,13 +64,32 @@ class Tests(unittest.TestCase):
 
         def evil(d, a):
             b = bytearray(d)
-            b[-1] ^= 0xFF
+            b[protocol.HDR_SIZE] ^= 0xFF      # flip a ciphertext byte, leave the header intact
             orig(bytes(b), a)
 
         tx._tx = evil
         self.assertFalse(tx.send(addr, 2, b"secret", retries=1, timeout=0.3))
         self.assertIsNone(rx.recv(0.2))
         self.assertGreaterEqual(rx.stats["auth_failed"], 1)
+
+    def test_header_tamper_rejected(self):
+        """Any modified header field fails the per-packet HMAC, before reassembly."""
+        tx, rx, addr = self.mk()
+        captured = []
+        orig = tx._tx
+        tx._tx = lambda d, a: (captured.append(d), orig(d, a))
+        self.assertTrue(tx.send(addr, 2, b"header integrity"))
+        self.assertIsNotNone(rx.recv(1))
+        pkt = bytearray(captured[0])
+        pkt[18] ^= 0x01                       # corrupt frag_total in the header
+        attacker = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            attacker.sendto(bytes(pkt), addr)
+            time.sleep(0.3)
+            self.assertGreaterEqual(rx.stats["bad_header"], 1)
+            self.assertEqual(rx.stats["delivered"], 1)
+        finally:
+            attacker.close()
 
     def test_unknown_node_rejected(self):
         tx, rx, addr = self.mk(peers=[7])
@@ -79,7 +101,8 @@ class Tests(unittest.TestCase):
         rogue = Node(1, os.urandom(32)).start()
         self.nodes = [rx, rogue]
         self.assertFalse(rogue.send(("127.0.0.1", rx.port), 2, b"fake", retries=1, timeout=0.3))
-        self.assertGreaterEqual(rx.stats["auth_failed"], 1)
+        # a wrong master key yields the wrong header key -> caught at the header check
+        self.assertGreaterEqual(rx.stats["bad_header"], 1)
         self.assertIsNone(rx.recv(0.2))
 
     def test_stale_message_rejected(self):

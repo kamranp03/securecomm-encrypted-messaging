@@ -1,11 +1,18 @@
 """Cryptography layer.
 
 * Pre-shared master key (32 bytes) is loaded on every node before deployment.
-* A per-node key is derived with HKDF-SHA256 (info = node id).
-* Messages are sealed with AES-256-GCM. Nonce = msg_id (unique per sender, time-seeded).
+* Two per-node keys are derived with HKDF-SHA256:
+    - a seal key   (info = "node:<id>")  used for AES-256-GCM message encryption
+    - a header key (info = "hdr:<id>")   used for HMAC-SHA256 packet-header authentication
+  Domain separation means the two keys are independent even though both come from
+  the same master key.
+* Messages are sealed with AES-256-GCM. Nonce = msg_id (unique per sender, strictly
+  increasing under a lock, optionally persisted across restarts).
   AAD = sender_id || msg_id, so a packet cannot be re-attributed to another node.
+* Every packet (DATA fragment and ACK) carries a truncated HMAC-SHA256 over its own
+  20-byte header (+ the ciphertext for DATA), so no header field -- sender, msg_id,
+  fragment index/count, type -- can be modified without detection.
 * The plaintext carries a timestamp, giving a freshness window against delayed replays.
-* ACKs are authenticated with a truncated HMAC-SHA256 under the acknowledger's node key.
 """
 import hmac as hmac_lib
 import os
@@ -19,6 +26,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 KEY_LEN = 32
 SALT = b"securecomm-v1"
+TAG_LEN = 16  # truncated HMAC-SHA256 tag size (128 bits)
 
 
 class AuthError(Exception):
@@ -29,7 +37,11 @@ class StaleError(Exception):
     """Timestamp outside freshness window."""
 
 
-def generate_master_key(path: str) -> None:
+def generate_master_key(path: str, force: bool = False) -> None:
+    if os.path.exists(path) and not force:
+        raise FileExistsError(
+            f"{path} already exists; use --force to overwrite (overwriting invalidates "
+            "every node that still holds the old key)")
     with open(path, "wb") as f:
         f.write(os.urandom(KEY_LEN))
     try:
@@ -39,8 +51,13 @@ def generate_master_key(path: str) -> None:
 
 
 def load_master_key(path: str) -> bytes:
-    with open(path, "rb") as f:
-        key = f.read()
+    try:
+        with open(path, "rb") as f:
+            key = f.read()
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"master key not found at {path!r} -- generate it first with: "
+            f"python cli.py keygen --out {path}")
     if len(key) != KEY_LEN:
         raise ValueError("master key must be 32 bytes")
     return key
@@ -49,6 +66,12 @@ def load_master_key(path: str) -> bytes:
 def derive_node_key(master: bytes, node_id: int) -> bytes:
     return HKDF(algorithm=hashes.SHA256(), length=KEY_LEN, salt=SALT,
                 info=b"node:" + struct.pack("!I", node_id)).derive(master)
+
+
+def derive_header_key(master: bytes, node_id: int) -> bytes:
+    """Independent key for packet-header authentication (domain separated from the seal key)."""
+    return HKDF(algorithm=hashes.SHA256(), length=KEY_LEN, salt=SALT,
+                info=b"hdr:" + struct.pack("!I", node_id)).derive(master)
 
 
 def _aad(sender_id: int, msg_id: int) -> bytes:
@@ -80,11 +103,14 @@ def decrypt_message(key: bytes, sender_id: int, msg_id: int, blob: bytes,
     return body[8:]
 
 
-def ack_tag(key: bytes, header: bytes) -> bytes:
+def header_tag(key: bytes, data: bytes) -> bytes:
+    """Truncated HMAC-SHA256 over a packet header (+ ciphertext for DATA fragments)."""
     h = hmac.HMAC(key, hashes.SHA256())
-    h.update(header)
-    return h.finalize()[:16]
+    h.update(data)
+    return h.finalize()[:TAG_LEN]
 
 
-def verify_ack_tag(key: bytes, header: bytes, tag: bytes) -> bool:
-    return hmac_lib.compare_digest(ack_tag(key, header), tag)
+def verify_header_tag(key: bytes, data: bytes, tag: bytes) -> bool:
+    if len(tag) != TAG_LEN:
+        return False
+    return hmac_lib.compare_digest(header_tag(key, data), tag)

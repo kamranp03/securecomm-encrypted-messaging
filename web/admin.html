@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Admin · SecureComm</title>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/fonts.css">
 <link rel="stylesheet" href="/style.css">
 <style>
 .wrap{max-width:1380px;margin:0 auto;padding:20px 24px 40px}
@@ -16,7 +16,7 @@
 .metrics span{font-size:12px;color:var(--mute)}
 /* path */
 .path{padding:18px 18px 22px;overflow-x:auto}
-.zones{display:grid;grid-template-columns:4fr 1.2fr 4fr;gap:10px;min-width:1000px;position:relative}
+.zones{display:grid;grid-template-columns:4fr 1.2fr 4fr;gap:10px;min-width:1120px;position:relative}
 .zone{border:1px dashed var(--line);border-radius:6px;padding:28px 10px 12px;position:relative}
 .zone>.label{position:absolute;top:8px;left:12px}
 .zone.ch{background:repeating-linear-gradient(-45deg,#fbfaf7,#fbfaf7 6px,#f4f2ec 6px,#f4f2ec 12px)}
@@ -30,11 +30,11 @@
 .st.bad{border-color:var(--red);background:var(--red2)}
 .st.bad::after{content:"DROPPED";position:absolute;right:6px;top:7px;font-size:9.5px;font-weight:700;color:var(--red);letter-spacing:.05em}
 .st.active{box-shadow:0 0 0 3px #0f5e5a33;border-color:var(--brand)}
-.wire{position:relative;height:30px;margin:14px 0 0;min-width:1000px}
+.wire{position:relative;height:30px;margin:14px 0 0;min-width:1120px}
 .wire::before{content:"";position:absolute;left:0;right:0;top:14px;border-top:2px solid var(--line)}
 .pkt{position:absolute;top:4px;left:0;height:22px;padding:0 8px;border-radius:3px;background:var(--navy);color:#fff;font:500 11px/22px var(--mono);white-space:nowrap;transition:left .42s cubic-bezier(.4,0,.2,1);display:none}
 .pkt.bad{background:var(--red)}.pkt.rep{background:var(--amber)}
-.legend{display:flex;gap:16px;font-size:12px;color:var(--ink2);margin-top:6px;min-width:1000px}
+.legend{display:flex;gap:16px;font-size:12px;color:var(--ink2);margin-top:6px;min-width:1120px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px;border:1px solid}
 .cols{display:grid;grid-template-columns:minmax(380px,1fr) 1.35fr;gap:16px;margin-top:16px;align-items:start}
 table.log{width:100%;border-collapse:collapse;font-size:12.5px}
@@ -104,9 +104,10 @@ table.log{width:100%;border-collapse:collapse;font-size:12.5px}
         </div></div>
         <div class="zone"><span class="label">Node 2 · Receiver</span><div class="stages">
           <div class="st" data-s="5"><span class="n">06</span><b>Sender check</b><small>trusted peers</small></div>
-          <div class="st" data-s="6"><span class="n">07</span><b>Replay check</b><small>msg_id counter</small></div>
-          <div class="st" data-s="7"><span class="n">08</span><b>Verify + decrypt</b><small>GCM tag, freshness</small></div>
-          <div class="st" data-s="8"><span class="n">09</span><b>Deliver</b><small>HMAC ACK</small></div>
+          <div class="st" data-s="6"><span class="n">07</span><b>Header check</b><small>HMAC-SHA256</small></div>
+          <div class="st" data-s="7"><span class="n">08</span><b>Replay check</b><small>msg_id counter</small></div>
+          <div class="st" data-s="8"><span class="n">09</span><b>Verify + decrypt</b><small>GCM tag, freshness</small></div>
+          <div class="st" data-s="9"><span class="n">10</span><b>Deliver</b><small>HMAC ACK</small></div>
         </div></div>
       </div>
       <div class="wire"><div class="pkt" id="pkt"></div></div>
@@ -127,9 +128,12 @@ table.log{width:100%;border-collapse:collapse;font-size:12.5px}
 </div>
 <script>
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const REASON={delivered:'Delivered',auth_failed:'GCM tag mismatch — tampered or wrong key',replay_blocked:'Replay blocked',unknown_sender:'Untrusted sender',stale:'Stale message',malformed:'Malformed packet'};
+const REASON={delivered:'Delivered',auth_failed:'GCM tag mismatch — tampered or wrong key',
+ bad_header:'Header HMAC failed — packet modified or forged',replay_blocked:'Replay blocked',
+ unknown_sender:'Untrusted sender',stale:'Stale message',malformed:'Malformed packet',
+ overflow:'Reassembly buffer full',retransmit_acked:'Retransmit re-ACKed',pending:'Incomplete message'};
 const ATT={none:'Normal',sniff:'Sniffed',tamper:'MITM modify',replay:'Replay',rogue:'Rogue node 9',wrongkey:'Forged key'};
-const FAILSTAGE={unknown_sender:5,malformed:5,replay_blocked:6,auth_failed:7,stale:7};
+const FAILSTAGE={unknown_sender:5,malformed:5,bad_header:6,replay_blocked:7,auth_failed:8,stale:8,overflow:8};
 let S=null,sel=null,tab='trace',lastN=0,tok=0;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const stEls=[...document.querySelectorAll('.st')];
@@ -137,12 +141,12 @@ const stEls=[...document.querySelectorAll('.st')];
 async function refresh(){
   const r=await fetch('/api/state'); if(r.status!==200){location.href='/login';return}
   S=await r.json(); const T=S.transmissions;
-  m1.textContent=T.length; m2.textContent=S.stats.delivered; m3.textContent=S.stats.dropped;
+  m1.textContent=S.tx_total; m2.textContent=S.stats.delivered; m3.textContent=S.stats.dropped;
   m4.textContent=T.reduce((a,t)=>a+t.packets.length*t.runs.length,0);
   const att=T.filter(t=>t.attack!=='none'&&t.attack!=='sniff');
   const blocked=att.filter(t=>t.runs.some(r=>!r.ok)).length;
   m5.textContent=att.length?Math.round(100*blocked/att.length)+'%':'—';
-  cnt.textContent=T.length+' entries';
+  cnt.textContent=S.tx_total+' entries'+(T.length<S.tx_total?` (last ${T.length} kept)`:'');
   log.innerHTML=T.length?T.slice().reverse().map(t=>{
     const ok=t.runs[0].ok, rep=t.runs.length>1;
     return `<tr class="row ${sel===t.id?'sel':''}" onclick="pick(${t.id})"><td class="mono">${t.id}</td><td class="mono">${t.time}</td>
@@ -150,7 +154,7 @@ async function refresh(){
     <td>${t.attack==='none'?'<span class="tag t-n">Normal</span>':`<span class="tag t-warn">${ATT[t.attack]}</span>`}</td>
     <td>${ok?'<span class="tag t-ok">Delivered</span>':`<span class="tag t-bad">${REASON[t.runs[0].reason].split(' —')[0]}</span>`}${rep?' <span class="tag t-bad">Replay blocked</span>':''}</td></tr>`}).join('')
     :'<tr><td colspan="5" class="empty">No traffic yet. Sign in as sender in another tab and send a message.</td></tr>';
-  if(T.length>lastN){lastN=T.length;pick(T[T.length-1].id);}
+  if(S.tx_total>lastN){lastN=S.tx_total;pick(T[T.length-1].id);}
 }
 function cur(){return S&&S.transmissions.find(t=>t.id===sel)}
 function pick(id){sel=id;document.querySelectorAll('tr.row').forEach(r=>r.classList.toggle('sel',r.getAttribute('onclick')===`pick(${id})`));renderInsp();animate();}
@@ -165,10 +169,10 @@ function renderInsp(){
       <div class="verdict ${r.ok?'v-ok':'v-bad'}">${r.ok?'Accepted and delivered to Node 2 inbox':'Discarded — '+REASON[r.reason]}</div></div>`});
     insp.innerHTML=h;
   } else {
-    insp.innerHTML=`<p style="font-size:12.5px;color:var(--ink2);margin:12px 0">Header layout: <span class="mono">magic(2) ver(1) type(1) sender(4) msg_id(8) frag_idx(2) frag_total(2)</span> followed by the ciphertext fragment.</p>`+
+    insp.innerHTML=`<p style="font-size:12.5px;color:var(--ink2);margin:12px 0">Header layout: <span class="mono">magic(2) ver(1) type(1) sender(4) msg_id(8) frag_idx(2) frag_total(2)</span> followed by the ciphertext fragment and its <span class="mono">16-byte header HMAC</span> (shaded below).</p>`+
     t.packets.map(p=>`<div class="pk"><table><tr><th>Frag</th><th>Magic</th><th>Ver</th><th>Type</th><th>Sender</th><th>msg_id</th><th>Size</th></tr>
       <tr><td>${p.frag}</td><td>${p.magic}</td><td>${p.ver}</td><td>${p.type}</td><td>${p.sender}</td><td>${p.msg_id}</td><td>${p.len} B</td></tr></table>
-      <div class="hex"><span class="h">${p.header.match(/../g).join(' ')}</span> ${p.payload.match(/../g).join(' ')}</div></div>`).join('');
+      <div class="hex"><span class="h">${p.header.match(/../g).join(' ')}</span> ${p.payload.slice(0,-32).match(/../g).join(' ')} <span class="h">${p.payload.slice(-32).match(/../g).join(' ')}</span></div></div>`).join('');
   }
 }
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.t;document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));renderInsp()});
@@ -181,7 +185,7 @@ async function animate(){
   for(const r of t.runs){
     stEls.forEach(e=>e.className='st');
     const replay=r.label.startsWith('Replay');
-    const end=r.ok?8:FAILSTAGE[r.reason]??7;
+    const end=r.ok?9:FAILSTAGE[r.reason]??8;
     pkt.className='pkt'+(replay?' rep':''); pkt.textContent=replay?'replayed pkt':'msg '+String(t.msg_id).slice(-6); pkt.style.display='block';
     for(let i=replay?4:0;i<=end;i++){
       if(my!==tok) return;
